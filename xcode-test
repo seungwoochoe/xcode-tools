@@ -1,0 +1,181 @@
+#!/bin/bash
+
+# xcode-test: Run Xcode tests with detailed failure reporting
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+show_help() {
+    cat <<EOF
+Usage: xcode-test <scheme> [options] [-- extra xcodebuild flags]
+
+Run Xcode tests with concise, detailed failure reporting.
+
+Arguments:
+  scheme              The Xcode scheme to test (required)
+
+Options:
+  -h, --help          Show this help message
+  -destination DEST   Simulator destination for iOS (auto-selected if not provided)
+  --result-path PATH  Path for .xcresult bundle (default: \$TMPDIR/<scheme>Test.xcresult)
+
+Examples:
+  xcode-test MyMacApp
+  xcode-test MyApp -destination "platform=iOS Simulator,name=iPhone 17"
+  xcode-test MyApp --result-path ./results.xcresult
+  xcode-test MyApp -- -only-testing:MyAppTests/SomeTest
+EOF
+}
+
+# Parse options
+RESULT_PATH=""
+DESTINATION=""
+EXTRA_ARGS=()
+POSITIONAL=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -destination)
+            DESTINATION="$2"
+            shift 2
+            ;;
+        --result-path)
+            RESULT_PATH="$2"
+            shift 2
+            ;;
+        --)
+            shift
+            EXTRA_ARGS=("$@")
+            break
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            echo "Use --help for usage information" >&2
+            exit 1
+            ;;
+        *)
+            POSITIONAL+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Source common functions
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+
+# Validate required arguments
+if [[ ${#POSITIONAL[@]} -lt 1 ]]; then
+    echo "Error: scheme is required" >&2
+    echo "Use --help for usage information" >&2
+    exit 1
+fi
+
+# Check dependencies
+check_dependencies
+
+SCHEME="${POSITIONAL[0]}"
+
+# Set result path if not specified
+if [[ -z "$RESULT_PATH" ]]; then
+    RESULT_PATH="${TMPDIR:-/tmp}/${SCHEME}Test.xcresult"
+fi
+
+# Auto-select iOS simulator if destination not provided and scheme is iOS-only
+if [[ -z "$DESTINATION" ]]; then
+    DESTINATIONS=$(xcodebuild -showdestinations -scheme "$SCHEME" 2>/dev/null || true)
+    # If destinations include "iOS Simulator" but no "macOS", it's an iOS project
+    if echo "$DESTINATIONS" | grep -q "iOS Simulator" && ! echo "$DESTINATIONS" | grep -q "platform:macOS"; then
+        DESTINATION=$(get_ios_simulator)
+    fi
+fi
+
+# Build destination flag if set
+DEST_ARGS=()
+if [[ -n "$DESTINATION" ]]; then
+    DEST_ARGS=(-destination "$DESTINATION")
+fi
+
+# Remove existing result bundle
+rm -rf "$RESULT_PATH"
+
+# Run tests
+TEST_OUTPUT=$(xcodebuild test -scheme "$SCHEME" ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} \
+    -resultBundlePath "$RESULT_PATH" \
+    "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1) || true
+
+if echo "$TEST_OUTPUT" | grep -q "TEST SUCCEEDED"; then
+    echo "✓ Tests passed"
+elif echo "$TEST_OUTPUT" | grep -q "TEST FAILED"; then
+    # Check for build errors first
+    BUILD_ERRORS=$(extract_errors "$TEST_OUTPUT")
+
+    if [[ -n "$BUILD_ERRORS" ]]; then
+        echo "✗ Build failed:"
+        echo ""
+        echo "$BUILD_ERRORS"
+        exit 1
+    fi
+
+    # Check for test failures in result bundle
+    TEST_FAILURES=$(xcrun xcresulttool get test-results tests --path "$RESULT_PATH" 2>/dev/null | jq -r '
+      .. |
+      objects |
+      select(.result == "Failed" and .nodeIdentifier != null and (.children | length > 0)) |
+      .nodeIdentifier as $test |
+      "\($test):\n" + ([.children[]? | select(.nodeType == "Failure Message") | .name] | join("\n")) + "\n"
+    ' || true)
+
+    if [[ -n "$TEST_FAILURES" ]]; then
+        echo "✗ Tests failed:"
+        echo ""
+        echo "$TEST_FAILURES"
+        exit 1
+    fi
+
+    # No errors found - rebuild with whole-module mode
+    echo "✗ Build failed. Rebuilding with whole-module mode..."
+    echo ""
+    rm -rf "$RESULT_PATH"
+    TEST_OUTPUT=$(xcodebuild test -scheme "$SCHEME" ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} \
+        SWIFT_COMPILATION_MODE=wholemodule \
+        -resultBundlePath "$RESULT_PATH" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1) || true
+    BUILD_ERRORS=$(extract_errors "$TEST_OUTPUT")
+
+    if [[ -n "$BUILD_ERRORS" ]]; then
+        echo "$BUILD_ERRORS"
+    else
+        show_fallback_errors "$TEST_OUTPUT"
+    fi
+    exit 1
+else
+    # Build error or other failure
+    ERRORS=$(extract_errors "$TEST_OUTPUT")
+
+    if [[ -n "$ERRORS" ]]; then
+        echo "✗ Build failed:"
+        echo ""
+        echo "$ERRORS"
+    else
+        # No detailed errors - rebuild with whole-module mode
+        echo "✗ Build failed. Rebuilding with whole-module mode..."
+        echo ""
+        rm -rf "$RESULT_PATH"
+        TEST_OUTPUT=$(xcodebuild test -scheme "$SCHEME" ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} \
+            SWIFT_COMPILATION_MODE=wholemodule \
+            -resultBundlePath "$RESULT_PATH" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1) || true
+        ERRORS=$(extract_errors "$TEST_OUTPUT")
+
+        if [[ -n "$ERRORS" ]]; then
+            echo "$ERRORS"
+        else
+            show_fallback_errors "$TEST_OUTPUT"
+        fi
+    fi
+    exit 1
+fi

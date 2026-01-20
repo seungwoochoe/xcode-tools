@@ -1,0 +1,144 @@
+#!/bin/bash
+
+# xcode-build: Build Xcode project with concise error reporting
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+show_help() {
+    cat <<EOF
+Usage: xcode-build <scheme> [configuration] [options] [-- extra xcodebuild flags]
+
+Build an Xcode project with concise, deduplicated error output.
+
+Arguments:
+  scheme              The Xcode scheme to build (required)
+  configuration       Build configuration: Debug or Release (default: Debug)
+
+Options:
+  -h, --help          Show this help message
+  -destination DEST   Build destination
+
+Examples:
+  xcode-build MyApp
+  xcode-build MyApp Release
+  xcode-build MyApp -destination 'platform=macOS'
+EOF
+}
+
+# Parse options
+DESTINATION=""
+EXTRA_ARGS=()
+POSITIONAL=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -destination)
+            DESTINATION="$2"
+            shift 2
+            ;;
+        --)
+            shift
+            EXTRA_ARGS=("$@")
+            break
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            echo "Use --help for usage information" >&2
+            exit 1
+            ;;
+        *)
+            POSITIONAL+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Source common functions
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+
+# Validate required arguments
+if [[ ${#POSITIONAL[@]} -lt 1 ]]; then
+    echo "Error: scheme is required" >&2
+    echo "Use --help for usage information" >&2
+    exit 1
+fi
+
+# Check dependencies
+check_dependencies
+
+SCHEME="${POSITIONAL[0]}"
+CONFIGURATION="${POSITIONAL[1]:-Debug}"
+
+# Warning cache file (per scheme)
+XCODE_BUILD_CACHE_DIR="${TMPDIR:-/tmp}/xcode-build-cache"
+mkdir -p "$XCODE_BUILD_CACHE_DIR"
+WARNING_CACHE="$XCODE_BUILD_CACHE_DIR/${SCHEME}-${CONFIGURATION}-warnings.txt"
+
+# Build destination flag if set
+DEST_ARGS=()
+if [[ -n "$DESTINATION" ]]; then
+    DEST_ARGS=(-destination "$DESTINATION")
+fi
+
+# Build and capture output
+BUILD_OUTPUT=$(xcodebuild -scheme "$SCHEME" -configuration "$CONFIGURATION" \
+    ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} build \
+    "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1) || true
+
+# Extract warnings
+WARNINGS=$(extract_warnings "$BUILD_OUTPUT")
+
+# Update warning cache
+if [[ -n "$WARNINGS" ]]; then
+    echo "$WARNINGS" > "$WARNING_CACHE"
+else
+    rm -f "$WARNING_CACHE"
+fi
+
+if echo "$BUILD_OUTPUT" | tail -1 | grep -q "BUILD SUCCEEDED"; then
+    echo "✓ Build succeeded"
+    if [[ -n "$WARNINGS" ]]; then
+        echo ""
+        echo "⚠ Warnings:"
+        echo "$WARNINGS"
+    fi
+else
+    ERRORS=$(extract_errors "$BUILD_OUTPUT")
+
+    if [[ -n "$ERRORS" ]]; then
+        echo "✗ Build failed with errors:"
+        echo ""
+        echo "$ERRORS"
+    else
+        # No detailed errors found - rebuild with whole-module mode
+        echo "✗ Build failed. Rebuilding with whole-module mode..."
+        echo ""
+        BUILD_OUTPUT=$(xcodebuild -scheme "$SCHEME" -configuration "$CONFIGURATION" \
+            ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} \
+            SWIFT_COMPILATION_MODE=wholemodule build \
+            "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1) || true
+        ERRORS=$(extract_errors "$BUILD_OUTPUT")
+
+        if [[ -n "$ERRORS" ]]; then
+            echo "$ERRORS"
+        else
+            show_fallback_errors "$BUILD_OUTPUT"
+        fi
+    fi
+
+    # Show warnings if present
+    WARNINGS=$(extract_warnings "$BUILD_OUTPUT")
+    if [[ -n "$WARNINGS" ]]; then
+        echo ""
+        echo "⚠ Warnings:"
+        echo "$WARNINGS"
+    fi
+    exit 1
+fi

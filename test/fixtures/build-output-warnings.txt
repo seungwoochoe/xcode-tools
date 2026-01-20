@@ -1,0 +1,20 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -scheme MyApp -configuration Debug build
+
+note: Building targets in dependency order
+note: Target dependency graph (1 target)
+
+SwiftDriver\ Compilation\ Requirements MyApp normal arm64 com.apple.xcode.tools.swift.compiler (in target 'MyApp' from project 'MyApp')
+    cd /Users/dev/MyApp
+    builtin-Swift-Compilation-Requirements -- ...
+
+/Users/dev/MyApp/Sources/ContentView.swift:15:9: warning: variable 'unused' was never used; consider replacing with '_' or removing it
+    let unused = 42
+        ^~~~~~
+        _
+
+/Users/dev/MyApp/Sources/AppDelegate.swift:22:5: warning: 'init()' is deprecated: Use init(configuration:) instead
+    let config = Config()
+    ^
+
+** BUILD SUCCEEDED **
