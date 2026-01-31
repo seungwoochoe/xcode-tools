@@ -102,7 +102,7 @@ else
     rm -f "$WARNING_CACHE"
 fi
 
-if echo "$BUILD_OUTPUT" | tail -1 | grep -q "BUILD SUCCEEDED"; then
+if echo "$BUILD_OUTPUT" | grep -q "BUILD SUCCEEDED"; then
     echo "✓ Build succeeded"
     if [[ -n "$WARNINGS" ]]; then
         echo ""
