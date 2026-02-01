@@ -124,6 +124,19 @@ else
             ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} \
             SWIFT_COMPILATION_MODE=wholemodule build \
             "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1) || true
+
+        # Check if retry succeeded
+        if echo "$BUILD_OUTPUT" | grep -q "BUILD SUCCEEDED"; then
+            echo "✓ Build succeeded (after retry)"
+            WARNINGS=$(extract_warnings "$BUILD_OUTPUT")
+            if [[ -n "$WARNINGS" ]]; then
+                echo ""
+                echo "⚠ Warnings:"
+                echo "$WARNINGS"
+            fi
+            exit 0
+        fi
+
         ERRORS=$(extract_errors "$BUILD_OUTPUT")
 
         if [[ -n "$ERRORS" ]]; then

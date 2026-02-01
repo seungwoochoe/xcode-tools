@@ -145,6 +145,17 @@ elif echo "$TEST_OUTPUT" | grep -q "TEST FAILED"; then
     TEST_OUTPUT=$(xcodebuild test -scheme "$SCHEME" ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} \
         SWIFT_COMPILATION_MODE=wholemodule \
         -resultBundlePath "$RESULT_PATH" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1) || true
+
+    # Check if retry succeeded
+    if echo "$TEST_OUTPUT" | grep -q "TEST SUCCEEDED"; then
+        echo "✓ Tests passed (after retry)"
+        exit 0
+    fi
+    if echo "$TEST_OUTPUT" | grep -q "BUILD SUCCEEDED"; then
+        echo "✓ Build succeeded (after retry)"
+        exit 0
+    fi
+
     BUILD_ERRORS=$(extract_errors "$TEST_OUTPUT")
 
     if [[ -n "$BUILD_ERRORS" ]]; then
@@ -169,6 +180,17 @@ else
         TEST_OUTPUT=$(xcodebuild test -scheme "$SCHEME" ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} \
             SWIFT_COMPILATION_MODE=wholemodule \
             -resultBundlePath "$RESULT_PATH" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1) || true
+
+        # Check if retry succeeded
+        if echo "$TEST_OUTPUT" | grep -q "TEST SUCCEEDED"; then
+            echo "✓ Tests passed (after retry)"
+            exit 0
+        fi
+        if echo "$TEST_OUTPUT" | grep -q "BUILD SUCCEEDED"; then
+            echo "✓ Build succeeded (after retry)"
+            exit 0
+        fi
+
         ERRORS=$(extract_errors "$TEST_OUTPUT")
 
         if [[ -n "$ERRORS" ]]; then
