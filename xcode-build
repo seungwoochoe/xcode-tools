@@ -118,7 +118,7 @@ else
         echo "$ERRORS"
     else
         # No detailed errors found - rebuild with whole-module mode
-        echo "✗ Build failed. Rebuilding with whole-module mode..."
+        echo "✗ Build failed with no error details. Rebuilding with whole-module mode..."
         echo ""
         BUILD_OUTPUT=$(xcodebuild -scheme "$SCHEME" -configuration "$CONFIGURATION" \
             ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} \

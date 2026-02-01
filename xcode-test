@@ -139,7 +139,7 @@ elif echo "$TEST_OUTPUT" | grep -q "TEST FAILED"; then
     fi
 
     # No errors found - rebuild with whole-module mode
-    echo "✗ Build failed. Rebuilding with whole-module mode..."
+    echo "✗ Build failed with no error details. Rebuilding with whole-module mode..."
     echo ""
     rm -rf "$RESULT_PATH"
     TEST_OUTPUT=$(xcodebuild test -scheme "$SCHEME" ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} \
@@ -174,7 +174,7 @@ else
         echo "$ERRORS"
     else
         # No detailed errors - rebuild with whole-module mode
-        echo "✗ Build failed. Rebuilding with whole-module mode..."
+        echo "✗ Build failed with no error details. Rebuilding with whole-module mode..."
         echo ""
         rm -rf "$RESULT_PATH"
         TEST_OUTPUT=$(xcodebuild test -scheme "$SCHEME" ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} \
