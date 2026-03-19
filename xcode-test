@@ -101,6 +101,59 @@ if [[ -n "$DESTINATION" ]]; then
     DEST_ARGS=(-destination "$DESTINATION")
 fi
 
+# Retry with database lock handling and whole-module fallback
+# Sets TEST_OUTPUT and exits 0 on success, returns 1 on failure
+retry_with_fallback() {
+    MAX_LOCK_RETRIES=5
+    lock_retries=0
+    while check_database_lock "$TEST_OUTPUT"; do
+        lock_retries=$((lock_retries + 1))
+        if [[ $lock_retries -gt $MAX_LOCK_RETRIES ]]; then
+            echo "✗ Build database still locked after $MAX_LOCK_RETRIES retries."
+            break
+        fi
+        echo "✗ Build database locked. Retrying ($lock_retries/$MAX_LOCK_RETRIES)..."
+        sleep 1
+        rm -rf "$RESULT_PATH"
+        TEST_OUTPUT=$(xcodebuild test -scheme "$SCHEME" ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} \
+            -resultBundlePath "$RESULT_PATH" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1) || true
+
+        if echo "$TEST_OUTPUT" | grep -q "TEST SUCCEEDED"; then
+            echo "✓ Tests passed (after retry)"
+            exit 0
+        fi
+        if echo "$TEST_OUTPUT" | grep -q "BUILD SUCCEEDED"; then
+            echo "✓ Build succeeded (after retry)"
+            exit 0
+        fi
+    done
+
+    # No errors found - rebuild with whole-module mode
+    echo "✗ Build failed with no error details. Rebuilding with whole-module mode..."
+    echo ""
+    rm -rf "$RESULT_PATH"
+    TEST_OUTPUT=$(xcodebuild test -scheme "$SCHEME" ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} \
+        SWIFT_COMPILATION_MODE=wholemodule \
+        -resultBundlePath "$RESULT_PATH" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1) || true
+
+    if echo "$TEST_OUTPUT" | grep -q "TEST SUCCEEDED"; then
+        echo "✓ Tests passed (after retry)"
+        exit 0
+    fi
+    if echo "$TEST_OUTPUT" | grep -q "BUILD SUCCEEDED"; then
+        echo "✓ Build succeeded (after retry)"
+        exit 0
+    fi
+
+    ERRORS=$(extract_errors "$TEST_OUTPUT")
+    if [[ -n "$ERRORS" ]]; then
+        echo "$ERRORS"
+    else
+        show_fallback_errors "$TEST_OUTPUT"
+    fi
+    return 1
+}
+
 # Remove existing result bundle
 rm -rf "$RESULT_PATH"
 
@@ -138,31 +191,7 @@ elif echo "$TEST_OUTPUT" | grep -q "TEST FAILED"; then
         exit 1
     fi
 
-    # No errors found - rebuild with whole-module mode
-    echo "✗ Build failed with no error details. Rebuilding with whole-module mode..."
-    echo ""
-    rm -rf "$RESULT_PATH"
-    TEST_OUTPUT=$(xcodebuild test -scheme "$SCHEME" ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} \
-        SWIFT_COMPILATION_MODE=wholemodule \
-        -resultBundlePath "$RESULT_PATH" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1) || true
-
-    # Check if retry succeeded
-    if echo "$TEST_OUTPUT" | grep -q "TEST SUCCEEDED"; then
-        echo "✓ Tests passed (after retry)"
-        exit 0
-    fi
-    if echo "$TEST_OUTPUT" | grep -q "BUILD SUCCEEDED"; then
-        echo "✓ Build succeeded (after retry)"
-        exit 0
-    fi
-
-    BUILD_ERRORS=$(extract_errors "$TEST_OUTPUT")
-
-    if [[ -n "$BUILD_ERRORS" ]]; then
-        echo "$BUILD_ERRORS"
-    else
-        show_fallback_errors "$TEST_OUTPUT"
-    fi
+    retry_with_fallback
     exit 1
 else
     # Build error or other failure
@@ -173,31 +202,7 @@ else
         echo ""
         echo "$ERRORS"
     else
-        # No detailed errors - rebuild with whole-module mode
-        echo "✗ Build failed with no error details. Rebuilding with whole-module mode..."
-        echo ""
-        rm -rf "$RESULT_PATH"
-        TEST_OUTPUT=$(xcodebuild test -scheme "$SCHEME" ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} \
-            SWIFT_COMPILATION_MODE=wholemodule \
-            -resultBundlePath "$RESULT_PATH" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1) || true
-
-        # Check if retry succeeded
-        if echo "$TEST_OUTPUT" | grep -q "TEST SUCCEEDED"; then
-            echo "✓ Tests passed (after retry)"
-            exit 0
-        fi
-        if echo "$TEST_OUTPUT" | grep -q "BUILD SUCCEEDED"; then
-            echo "✓ Build succeeded (after retry)"
-            exit 0
-        fi
-
-        ERRORS=$(extract_errors "$TEST_OUTPUT")
-
-        if [[ -n "$ERRORS" ]]; then
-            echo "$ERRORS"
-        else
-            show_fallback_errors "$TEST_OUTPUT"
-        fi
+        retry_with_fallback
     fi
     exit 1
 fi

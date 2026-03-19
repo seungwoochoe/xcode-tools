@@ -23,6 +23,13 @@ check_dependencies() {
     fi
 }
 
+# Check if build output indicates a database lock error
+# Usage: check_database_lock "$BUILD_OUTPUT"
+# Returns 0 (true) if database is locked, 1 (false) otherwise
+check_database_lock() {
+    [[ "$1" == *"database is locked"* ]]
+}
+
 # Extract compilation errors from xcodebuild output
 # Usage: extract_errors "$BUILD_OUTPUT"
 extract_errors() {
@@ -35,6 +42,18 @@ extract_errors() {
 extract_warnings() {
     local output="$1"
     echo "$output" | grep -E ":[0-9]+:[0-9]+: warning:" | sort -u || true
+}
+
+# Print warnings if present
+# Usage: print_warnings "$BUILD_OUTPUT"
+print_warnings() {
+    local warnings
+    warnings=$(extract_warnings "$1")
+    if [[ -n "$warnings" ]]; then
+        echo ""
+        echo "⚠ Warnings:"
+        echo "$warnings"
+    fi
 }
 
 # Get a default iOS simulator destination (prefers iPhone Pro Max)

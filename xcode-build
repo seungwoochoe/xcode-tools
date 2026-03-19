@@ -104,11 +104,7 @@ fi
 
 if echo "$BUILD_OUTPUT" | grep -q "BUILD SUCCEEDED"; then
     echo "✓ Build succeeded"
-    if [[ -n "$WARNINGS" ]]; then
-        echo ""
-        echo "⚠ Warnings:"
-        echo "$WARNINGS"
-    fi
+    print_warnings "$BUILD_OUTPUT"
 else
     ERRORS=$(extract_errors "$BUILD_OUTPUT")
 
@@ -117,6 +113,35 @@ else
         echo ""
         echo "$ERRORS"
     else
+        # Retry while database is locked before expensive whole-module retry
+        MAX_LOCK_RETRIES=5
+        lock_retries=0
+        while check_database_lock "$BUILD_OUTPUT"; do
+            lock_retries=$((lock_retries + 1))
+            if [[ $lock_retries -gt $MAX_LOCK_RETRIES ]]; then
+                echo "✗ Build database still locked after $MAX_LOCK_RETRIES retries."
+                break
+            fi
+            echo "✗ Build database locked. Retrying ($lock_retries/$MAX_LOCK_RETRIES)..."
+            sleep 1
+            BUILD_OUTPUT=$(xcodebuild -scheme "$SCHEME" -configuration "$CONFIGURATION" \
+                ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} build \
+                "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1) || true
+
+            if echo "$BUILD_OUTPUT" | grep -q "BUILD SUCCEEDED"; then
+                echo "✓ Build succeeded (after retry)"
+                # Update warning cache
+                WARNINGS=$(extract_warnings "$BUILD_OUTPUT")
+                if [[ -n "$WARNINGS" ]]; then
+                    echo "$WARNINGS" > "$WARNING_CACHE"
+                else
+                    rm -f "$WARNING_CACHE"
+                fi
+                print_warnings "$BUILD_OUTPUT"
+                exit 0
+            fi
+        done
+
         # No detailed errors found - rebuild with whole-module mode
         echo "✗ Build failed with no error details. Rebuilding with whole-module mode..."
         echo ""
@@ -128,12 +153,7 @@ else
         # Check if retry succeeded
         if echo "$BUILD_OUTPUT" | grep -q "BUILD SUCCEEDED"; then
             echo "✓ Build succeeded (after retry)"
-            WARNINGS=$(extract_warnings "$BUILD_OUTPUT")
-            if [[ -n "$WARNINGS" ]]; then
-                echo ""
-                echo "⚠ Warnings:"
-                echo "$WARNINGS"
-            fi
+            print_warnings "$BUILD_OUTPUT"
             exit 0
         fi
 
@@ -147,11 +167,6 @@ else
     fi
 
     # Show warnings if present
-    WARNINGS=$(extract_warnings "$BUILD_OUTPUT")
-    if [[ -n "$WARNINGS" ]]; then
-        echo ""
-        echo "⚠ Warnings:"
-        echo "$WARNINGS"
-    fi
+    print_warnings "$BUILD_OUTPUT"
     exit 1
 fi
