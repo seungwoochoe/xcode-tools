@@ -2,95 +2,34 @@
 
 [![CI](https://github.com/seungwoochoe/xcode-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/seungwoochoe/xcode-tools/actions/workflows/ci.yml)
 
-`xcodebuild` output is verbose and doesn't show test failure reasons. These tools extract and deduplicate the errors you care about.
+Wrappers around `xcodebuild` that deduplicate build errors and report test failure reasons.
 
-## Before & After
+## Setup
 
-**xcodebuild test** (hundreds of lines, ~20K tokens):
-```
-Resolved source packages:
-  some-package @ 1.0.0
-  another-package @ 2.0.0
-  ...14 packages...
-
-note: Target dependency graph (50 targets)
-    Target 'MyAppTests' in project 'MyApp'
-        ➜ Explicit dependency on target 'MyApp' in project 'MyApp'
-    ...
-
-Test case 'FeatureTests/testButtonTapped()' passed on 'My Mac' (0.001 seconds)
-Test case 'FeatureTests/testNavigation()' passed on 'My Mac' (0.002 seconds)
-Test case 'FeatureTests/testInitialState()' passed on 'My Mac' (0.001 seconds)
-...100 more passing tests...
-Test case 'FeatureTests/testOperation()' failed on 'My Mac' (0.500 seconds)
-
-** TEST FAILED **
-```
-
-xcodebuild shows every passing test and doesn't show *why* tests fail.
-
-**xcode-test** (only failures, and why):
-```
-✗ Tests failed:
-
-FeatureTests/testOperation():
-FeatureTests.swift:42: Expectation failed: (state.count → 0) == 1
-```
-
-## Installation
-
-Clone the repository and add it to your PATH:
-
-```bash
-git clone https://github.com/seungwoochoe/xcode-tools.git
-echo 'export PATH="$PATH:/path/to/xcode-tools"' >> ~/.zshrc
-source ~/.zshrc
-```
+Install Xcode with the required platform SDKs and simulators, select it with
+`xcode-select`, and install `jq` (`brew install jq`) for test-result parsing.
+Clone this repository and add its directory to your shell's `PATH`.
 
 ## Usage
 
-### xcode-build
+Run from the project directory with an existing Xcode scheme:
 
-Build an Xcode project with concise error output:
-
-```bash
-xcode-build MyApp               # Build with Debug configuration
-xcode-build MyApp Release       # Build with Release configuration
-```
-
-### xcode-test
-
-Run tests with detailed failure reporting:
-
-```bash
-xcode-test MyApp                                                            # macOS app
-xcode-test MyApp -destination "platform=iOS Simulator,name=iPhone 17"       # iOS app (explicit)
-xcode-test MyApp --result-path ./results.xcresult                           # Custom result path
-```
-
-For iOS-only projects, if `-destination` is not provided, xcode-test automatically selects the latest iPhone Pro Max simulator.
-
-### Passing Extra Flags
-
-Both commands support `--` to pass additional flags to xcodebuild:
-
-```bash
+```sh
+xcode-build MyApp                 # Debug
+xcode-build MyApp Release
+xcode-test MyMacApp
+xcode-test MyApp -destination "platform=iOS Simulator,name=iPhone 18 Pro"
+xcode-test MyApp --result-path ./results.xcresult
 xcode-test MyApp -- -only-testing:MyAppTests/SomeTest
 ```
 
-## Options
+For iOS-only schemes, omitting `-destination` selects the latest available iPhone
+Pro Max, falling back to another iPhone. Use the explicit destination above to
+select iPhone 18 Pro; that simulator must be installed.
 
-| Option | Description |
-|--------|-------------|
-| `-h, --help` | Show help message |
-| `-destination DEST` | Build/test destination |
-| `--result-path PATH` | (xcode-test only) Custom path for .xcresult bundle |
+Both commands accept `-h`/`--help`, `-destination DEST`, and extra `xcodebuild`
+flags after `--`. Only `xcode-test` accepts `--result-path PATH`; its default is
+`$TMPDIR/<scheme>Test.xcresult` (or `/tmp` when `TMPDIR` is unset). The existing
+result bundle at that path is replaced on each run.
 
-## Requirements
-
-- Xcode Command Line Tools (`xcode-select --install`)
-- `jq` for test failure parsing (`brew install jq`)
-
-## License
-
-This project is released under the MIT license. See [LICENSE](LICENSE) for details.
+[MIT license](LICENSE).
