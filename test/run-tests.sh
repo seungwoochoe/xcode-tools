@@ -96,6 +96,9 @@ run_test_contains "xcode-build without args shows error" "$ERROR_OUTPUT" "scheme
 ERROR_OUTPUT=$("$ROOT_DIR/xcode-test" 2>&1 || true)
 run_test_contains "xcode-test without args shows error" "$ERROR_OUTPUT" "scheme is required"
 
+# shellcheck source=test/test-reporting.sh
+source "$SCRIPT_DIR/test-reporting.sh"
+
 # Summary
 echo ""
 echo "========================================"

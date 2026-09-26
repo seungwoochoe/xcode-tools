@@ -10,7 +10,7 @@ show_help() {
     cat <<EOF
 Usage: xcode-test <scheme> [options] [-- extra xcodebuild flags]
 
-Run Xcode tests with concise, detailed failure reporting.
+Run Xcode tests with concise counts, warnings, and detailed failure reporting.
 
 Arguments:
   scheme              The Xcode scheme to test (required)
@@ -68,6 +68,8 @@ done
 # Source common functions
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/test-results.sh
+source "$SCRIPT_DIR/lib/test-results.sh"
 
 # Validate required arguments
 if [[ ${#POSITIONAL[@]} -lt 1 ]]; then
@@ -78,6 +80,10 @@ fi
 
 # Check dependencies
 check_dependencies
+if ! command -v jq &>/dev/null; then
+    echo "Missing required dependency: jq (install with brew install jq)" >&2
+    exit 1
+fi
 
 SCHEME="${POSITIONAL[0]}"
 
@@ -119,7 +125,7 @@ retry_with_fallback() {
             -resultBundlePath "$RESULT_PATH" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1) || true
 
         if echo "$TEST_OUTPUT" | grep -q "TEST SUCCEEDED"; then
-            echo "✓ Tests passed (after retry)"
+            print_test_success "$RESULT_PATH" "$TEST_OUTPUT" " (after retry)"
             exit 0
         fi
         if echo "$TEST_OUTPUT" | grep -q "BUILD SUCCEEDED"; then
@@ -137,7 +143,7 @@ retry_with_fallback() {
         -resultBundlePath "$RESULT_PATH" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1) || true
 
     if echo "$TEST_OUTPUT" | grep -q "TEST SUCCEEDED"; then
-        echo "✓ Tests passed (after retry)"
+        print_test_success "$RESULT_PATH" "$TEST_OUTPUT" " (after retry)"
         exit 0
     fi
     if echo "$TEST_OUTPUT" | grep -q "BUILD SUCCEEDED"; then
@@ -163,7 +169,7 @@ TEST_OUTPUT=$(xcodebuild test -scheme "$SCHEME" ${DEST_ARGS[@]+"${DEST_ARGS[@]}"
     "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1) || true
 
 if echo "$TEST_OUTPUT" | grep -q "TEST SUCCEEDED"; then
-    echo "✓ Tests passed"
+    print_test_success "$RESULT_PATH" "$TEST_OUTPUT"
 elif echo "$TEST_OUTPUT" | grep -q "TEST FAILED"; then
     # Check for build errors first
     BUILD_ERRORS=$(extract_errors "$TEST_OUTPUT")

@@ -16,7 +16,7 @@ jobs:
         run: sudo apt-get install -y shellcheck
 
       - name: Run shellcheck
-        run: shellcheck xcode-build xcode-test lib/common.sh test/run-tests.sh
+        run: shellcheck xcode-build xcode-test lib/*.sh test/*.sh
 
   test:
     runs-on: ubuntu-latest

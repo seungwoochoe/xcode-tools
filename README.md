@@ -32,4 +32,12 @@ flags after `--`. Only `xcode-test` accepts `--result-path PATH`; its default is
 `$TMPDIR/<scheme>Test.xcresult` (or `/tmp` when `TMPDIR` is unset). The existing
 result bundle at that path is replaced on each run.
 
+Successful test runs print aggregate test counts, deduplicated build/runtime
+warnings, and the result-bundle path. Counts follow `xcresulttool`'s test summary;
+parameterized executions can outnumber the reported tests. Warning output is
+limited to five messages, with long messages shortened; inspect the bundle for
+complete diagnostics. If result metadata cannot be read, the output says so and
+falls back to console warnings. A passing test suite can still report a coverage
+collection failure.
+
 [MIT license](LICENSE).
