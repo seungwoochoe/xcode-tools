@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Print a bounded success report; keep complete diagnostics in the result bundle.
-# Usage: print_test_success "$RESULT_PATH" "$TEST_OUTPUT" [" (after retry)"]
+# Usage: print_test_success "$RESULT_PATH" "$TEST_OUTPUT"
 print_test_success() {
-    local result_path="$1" output="$2" suffix="${3:-}"
+    local result_path="$1" output="$2"
     local summary counts build_warnings warnings
 
     summary=$(xcrun xcresulttool get test-results summary --path "$result_path" 2>/dev/null |
@@ -15,7 +15,7 @@ print_test_success() {
                (.skippedTests | type) == "number") |
         "\(.totalTestCount) total, \(.passedTests) passed, \(.failedTests) failed, \(.skippedTests) skipped, \(.expectedFailures // 0) expected failures"
     ') || counts="counts unavailable"
-    printf '✓ Tests passed%s (%s)\n' "$suffix" "$counts"
+    printf '✓ Tests passed (%s)\n' "$counts"
 
     build_warnings=$(xcrun xcresulttool get build-results --path "$result_path" 2>/dev/null |
         jq -ce 'select((.warnings | type) == "array") | .warnings + (.analyzerWarnings // [])') || build_warnings=''

@@ -17,20 +17,19 @@ Arguments:
 
 Options:
   -h, --help          Show this help message
-  -destination DEST   Simulator destination for iOS (auto-selected if not provided)
+  -destination DEST   Test destination
   --result-path PATH  Path for .xcresult bundle (default: \$TMPDIR/<scheme>Test.xcresult)
 
 Examples:
   xcode-test MyMacApp
-  xcode-test MyApp -destination "platform=iOS Simulator,name=iPhone 17"
+  xcode-test MyApp -destination "platform=iOS Simulator,name=iPhone 18 Pro"
   xcode-test MyApp --result-path ./results.xcresult
   xcode-test MyApp -- -only-testing:MyAppTests/SomeTest
 EOF
 }
 
-# Parse options
 RESULT_PATH=""
-DESTINATION=""
+DEST_ARGS=()
 EXTRA_ARGS=()
 POSITIONAL=()
 
@@ -41,7 +40,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         -destination)
-            DESTINATION="$2"
+            DEST_ARGS=(-destination "$2")
             shift 2
             ;;
         --result-path)
@@ -65,21 +64,17 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Source common functions
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 # shellcheck source=lib/test-results.sh
 source "$SCRIPT_DIR/lib/test-results.sh"
 
-# Validate required arguments
 if [[ ${#POSITIONAL[@]} -lt 1 ]]; then
     echo "Error: scheme is required" >&2
     echo "Use --help for usage information" >&2
     exit 1
 fi
 
-# Check dependencies
-check_dependencies
 if ! command -v jq &>/dev/null; then
     echo "Missing required dependency: jq (install with brew install jq)" >&2
     exit 1
@@ -87,128 +82,46 @@ fi
 
 SCHEME="${POSITIONAL[0]}"
 
-# Set result path if not specified
 if [[ -z "$RESULT_PATH" ]]; then
     RESULT_PATH="${TMPDIR:-/tmp}/${SCHEME}Test.xcresult"
 fi
 
-# Auto-select iOS simulator if destination not provided and scheme is iOS-only
-if [[ -z "$DESTINATION" ]]; then
-    DESTINATIONS=$(xcodebuild -showdestinations -scheme "$SCHEME" 2>/dev/null || true)
-    # If destinations include "iOS Simulator" but no "macOS", it's an iOS project
-    if echo "$DESTINATIONS" | grep -q "iOS Simulator" && ! echo "$DESTINATIONS" | grep -q "platform:macOS"; then
-        DESTINATION=$(get_ios_simulator)
-    fi
-fi
-
-# Build destination flag if set
-DEST_ARGS=()
-if [[ -n "$DESTINATION" ]]; then
-    DEST_ARGS=(-destination "$DESTINATION")
-fi
-
-# Retry with database lock handling and whole-module fallback
-# Sets TEST_OUTPUT and exits 0 on success, returns 1 on failure
-retry_with_fallback() {
-    MAX_LOCK_RETRIES=5
-    lock_retries=0
-    while check_database_lock "$TEST_OUTPUT"; do
-        lock_retries=$((lock_retries + 1))
-        if [[ $lock_retries -gt $MAX_LOCK_RETRIES ]]; then
-            echo "✗ Build database still locked after $MAX_LOCK_RETRIES retries."
-            break
-        fi
-        echo "✗ Build database locked. Retrying ($lock_retries/$MAX_LOCK_RETRIES)..."
-        sleep 1
-        rm -rf "$RESULT_PATH"
-        TEST_OUTPUT=$(xcodebuild test -scheme "$SCHEME" ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} \
-            -resultBundlePath "$RESULT_PATH" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1) || true
-
-        if echo "$TEST_OUTPUT" | grep -q "TEST SUCCEEDED"; then
-            print_test_success "$RESULT_PATH" "$TEST_OUTPUT" " (after retry)"
-            exit 0
-        fi
-        if echo "$TEST_OUTPUT" | grep -q "BUILD SUCCEEDED"; then
-            echo "✓ Build succeeded (after retry)"
-            exit 0
-        fi
-    done
-
-    # No errors found - rebuild with whole-module mode
-    echo "✗ Build failed with no error details. Rebuilding with whole-module mode..."
-    echo ""
-    rm -rf "$RESULT_PATH"
-    TEST_OUTPUT=$(xcodebuild test -scheme "$SCHEME" ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} \
-        SWIFT_COMPILATION_MODE=wholemodule \
-        -resultBundlePath "$RESULT_PATH" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1) || true
-
-    if echo "$TEST_OUTPUT" | grep -q "TEST SUCCEEDED"; then
-        print_test_success "$RESULT_PATH" "$TEST_OUTPUT" " (after retry)"
-        exit 0
-    fi
-    if echo "$TEST_OUTPUT" | grep -q "BUILD SUCCEEDED"; then
-        echo "✓ Build succeeded (after retry)"
-        exit 0
-    fi
-
-    ERRORS=$(extract_errors "$TEST_OUTPUT")
-    if [[ -n "$ERRORS" ]]; then
-        echo "$ERRORS"
-    else
-        show_fallback_errors "$TEST_OUTPUT"
-    fi
-    return 1
-}
-
-# Remove existing result bundle
-rm -rf "$RESULT_PATH"
-
-# Run tests
-TEST_OUTPUT=$(xcodebuild test -scheme "$SCHEME" ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} \
+run_xcodebuild test -scheme "$SCHEME" ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} \
     -resultBundlePath "$RESULT_PATH" \
-    "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1) || true
+    ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
 
-if echo "$TEST_OUTPUT" | grep -q "TEST SUCCEEDED"; then
-    print_test_success "$RESULT_PATH" "$TEST_OUTPUT"
-elif echo "$TEST_OUTPUT" | grep -q "TEST FAILED"; then
-    # Check for build errors first
-    BUILD_ERRORS=$(extract_errors "$TEST_OUTPUT")
+if echo "$XCODEBUILD_OUTPUT" | grep -q "TEST SUCCEEDED"; then
+    print_test_success "$RESULT_PATH" "$XCODEBUILD_OUTPUT"
+    exit 0
+fi
 
-    if [[ -n "$BUILD_ERRORS" ]]; then
-        echo "✗ Build failed:"
-        echo ""
-        echo "$BUILD_ERRORS"
-        exit 1
-    fi
-
-    # Check for test failures in result bundle
-    TEST_FAILURES=$(xcrun xcresulttool get test-results tests --path "$RESULT_PATH" 2>/dev/null | jq -r '
-      .. |
-      objects |
-      select(.result == "Failed" and .nodeIdentifier != null and (.children | length > 0)) |
-      .nodeIdentifier as $test |
-      "\($test):\n" + ([.children[]? | select(.nodeType == "Failure Message") | .name] | join("\n")) + "\n"
-    ' || true)
-
-    if [[ -n "$TEST_FAILURES" ]]; then
-        echo "✗ Tests failed:"
-        echo ""
-        echo "$TEST_FAILURES"
-        exit 1
-    fi
-
-    retry_with_fallback
-    exit 1
-else
-    # Build error or other failure
-    ERRORS=$(extract_errors "$TEST_OUTPUT")
-
-    if [[ -n "$ERRORS" ]]; then
-        echo "✗ Build failed:"
-        echo ""
-        echo "$ERRORS"
-    else
-        retry_with_fallback
-    fi
+BUILD_ERRORS=$(extract_errors "$XCODEBUILD_OUTPUT")
+if [[ -n "$BUILD_ERRORS" ]]; then
+    echo "✗ Build failed:"
+    echo ""
+    echo "$BUILD_ERRORS"
     exit 1
 fi
+
+TEST_FAILURES=$(xcrun xcresulttool get test-results tests --path "$RESULT_PATH" 2>/dev/null | jq -r '
+  .. |
+  objects |
+  select(.result == "Failed" and .nodeIdentifier != null and (.children | length > 0)) |
+  .nodeIdentifier as $test |
+  "\($test):\n" + ([.children[]? | select(.nodeType == "Failure Message") | .name] | join("\n")) + "\n"
+' || true)
+
+if [[ -n "$TEST_FAILURES" ]]; then
+    echo "✗ Tests failed:"
+    echo ""
+    echo "$TEST_FAILURES"
+    exit 1
+fi
+
+# No source errors and no recorded test failures: the build or test runner
+# itself failed (linking, signing, destination, crash before reporting).
+echo "✗ Test run failed:"
+echo ""
+show_fallback_errors "$XCODEBUILD_OUTPUT"
+echo "Result bundle: $RESULT_PATH"
+exit 1

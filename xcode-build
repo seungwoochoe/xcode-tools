@@ -27,8 +27,7 @@ Examples:
 EOF
 }
 
-# Parse options
-DESTINATION=""
+DEST_ARGS=()
 EXTRA_ARGS=()
 POSITIONAL=()
 
@@ -39,7 +38,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         -destination)
-            DESTINATION="$2"
+            DEST_ARGS=(-destination "$2")
             shift 2
             ;;
         --)
@@ -59,114 +58,35 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Source common functions
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
-# Validate required arguments
 if [[ ${#POSITIONAL[@]} -lt 1 ]]; then
     echo "Error: scheme is required" >&2
     echo "Use --help for usage information" >&2
     exit 1
 fi
 
-# Check dependencies
-check_dependencies
-
 SCHEME="${POSITIONAL[0]}"
 CONFIGURATION="${POSITIONAL[1]:-Debug}"
 
-# Warning cache file (per scheme)
-XCODE_BUILD_CACHE_DIR="${TMPDIR:-/tmp}/xcode-build-cache"
-mkdir -p "$XCODE_BUILD_CACHE_DIR"
-WARNING_CACHE="$XCODE_BUILD_CACHE_DIR/${SCHEME}-${CONFIGURATION}-warnings.txt"
-
-# Build destination flag if set
-DEST_ARGS=()
-if [[ -n "$DESTINATION" ]]; then
-    DEST_ARGS=(-destination "$DESTINATION")
-fi
-
-# Build and capture output
-BUILD_OUTPUT=$(xcodebuild -scheme "$SCHEME" -configuration "$CONFIGURATION" \
+run_xcodebuild -scheme "$SCHEME" -configuration "$CONFIGURATION" \
     ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} build \
-    "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1) || true
+    ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
 
-# Extract warnings
-WARNINGS=$(extract_warnings "$BUILD_OUTPUT")
-
-# Update warning cache
-if [[ -n "$WARNINGS" ]]; then
-    echo "$WARNINGS" > "$WARNING_CACHE"
-else
-    rm -f "$WARNING_CACHE"
-fi
-
-if echo "$BUILD_OUTPUT" | grep -q "BUILD SUCCEEDED"; then
+if echo "$XCODEBUILD_OUTPUT" | grep -q "BUILD SUCCEEDED"; then
     echo "✓ Build succeeded"
-    print_warnings "$BUILD_OUTPUT"
-else
-    ERRORS=$(extract_errors "$BUILD_OUTPUT")
-
-    if [[ -n "$ERRORS" ]]; then
-        echo "✗ Build failed with errors:"
-        echo ""
-        echo "$ERRORS"
-    else
-        # Retry while database is locked before expensive whole-module retry
-        MAX_LOCK_RETRIES=5
-        lock_retries=0
-        while check_database_lock "$BUILD_OUTPUT"; do
-            lock_retries=$((lock_retries + 1))
-            if [[ $lock_retries -gt $MAX_LOCK_RETRIES ]]; then
-                echo "✗ Build database still locked after $MAX_LOCK_RETRIES retries."
-                break
-            fi
-            echo "✗ Build database locked. Retrying ($lock_retries/$MAX_LOCK_RETRIES)..."
-            sleep 1
-            BUILD_OUTPUT=$(xcodebuild -scheme "$SCHEME" -configuration "$CONFIGURATION" \
-                ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} build \
-                "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1) || true
-
-            if echo "$BUILD_OUTPUT" | grep -q "BUILD SUCCEEDED"; then
-                echo "✓ Build succeeded (after retry)"
-                # Update warning cache
-                WARNINGS=$(extract_warnings "$BUILD_OUTPUT")
-                if [[ -n "$WARNINGS" ]]; then
-                    echo "$WARNINGS" > "$WARNING_CACHE"
-                else
-                    rm -f "$WARNING_CACHE"
-                fi
-                print_warnings "$BUILD_OUTPUT"
-                exit 0
-            fi
-        done
-
-        # No detailed errors found - rebuild with whole-module mode
-        echo "✗ Build failed with no error details. Rebuilding with whole-module mode..."
-        echo ""
-        BUILD_OUTPUT=$(xcodebuild -scheme "$SCHEME" -configuration "$CONFIGURATION" \
-            ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} \
-            SWIFT_COMPILATION_MODE=wholemodule build \
-            "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1) || true
-
-        # Check if retry succeeded
-        if echo "$BUILD_OUTPUT" | grep -q "BUILD SUCCEEDED"; then
-            echo "✓ Build succeeded (after retry)"
-            print_warnings "$BUILD_OUTPUT"
-            exit 0
-        fi
-
-        ERRORS=$(extract_errors "$BUILD_OUTPUT")
-
-        if [[ -n "$ERRORS" ]]; then
-            echo "$ERRORS"
-        else
-            show_fallback_errors "$BUILD_OUTPUT"
-        fi
-    fi
-
-    # Show warnings if present
-    print_warnings "$BUILD_OUTPUT"
-    exit 1
+    print_warnings "$XCODEBUILD_OUTPUT"
+    exit 0
 fi
+
+echo "✗ Build failed:"
+echo ""
+ERRORS=$(extract_errors "$XCODEBUILD_OUTPUT")
+if [[ -n "$ERRORS" ]]; then
+    echo "$ERRORS"
+else
+    show_fallback_errors "$XCODEBUILD_OUTPUT"
+fi
+print_warnings "$XCODEBUILD_OUTPUT"
+exit 1

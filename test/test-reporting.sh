@@ -12,12 +12,10 @@ cat > "$REPORT_TMP/bin/xcodebuild" <<'MOCK'
 count=$(cat "$REPORT_TMP/calls" 2>/dev/null || echo 0)
 count=$((count + 1))
 echo "$count" > "$REPORT_TMP/calls"
-if [[ "$count" == 1 ]]; then
-    case "${REPORT_MODE:-normal}" in
-        lock) echo 'error: database is locked'; exit 1 ;;
-        fallback) echo '** TEST FAILED **'; exit 1 ;;
-    esac
-fi
+case "${REPORT_MODE:-normal}" in
+    lock) [[ "$count" == 1 ]] && { echo 'error: database is locked'; exit 1; } ;;
+    fail) printf '%s\n' 'error: Signing requires a development team' '** TEST FAILED **'; exit 65 ;;
+esac
 printf '%s\n' "${REPORT_CONSOLE:-}" '** TEST SUCCEEDED **'
 MOCK
 cat > "$REPORT_TMP/bin/xcrun" <<'MOCK'
@@ -81,10 +79,14 @@ run_test_contains "still includes result path with unreadable metadata" "$REPORT
 
 REPORT_SUMMARY='{"totalTestCount":4,"passedTests":4,"failedTests":0,"skippedTests":0}'
 REPORT_BUILD='{"warnings":[{"message":"Retry warning"}]}'
-for mode in lock fallback; do
-    run_report "$mode"
-    run_test "$mode retry succeeds" "$REPORT_STATUS" "0"
-    run_test_contains "$mode retry uses count report" "$REPORT_RESULT" 'Tests passed (after retry) (4 total, 4 passed'
-    run_test_contains "$mode retry includes warnings" "$REPORT_RESULT" 'Retry warning'
-    run_test_contains "$mode retry includes result path" "$REPORT_RESULT" 'Result bundle:'
-done
+run_report lock
+run_test "lock retry succeeds" "$REPORT_STATUS" "0"
+run_test "lock retry reruns xcodebuild once" "$(cat "$REPORT_TMP/calls")" "2"
+run_test_contains "lock retry uses count report" "$REPORT_RESULT" 'Tests passed (4 total, 4 passed'
+run_test_contains "lock retry includes warnings" "$REPORT_RESULT" 'Retry warning'
+
+run_report fail
+run_test "unexplained failure exits nonzero" "$REPORT_STATUS" "1"
+run_test "unexplained failure does not rerun tests" "$(cat "$REPORT_TMP/calls")" "1"
+run_test_contains "unexplained failure shows xcodebuild errors" "$REPORT_RESULT" 'error: Signing requires a development team'
+run_test_contains "unexplained failure includes result path" "$REPORT_RESULT" 'Result bundle:'

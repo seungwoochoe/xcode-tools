@@ -2,32 +2,23 @@
 
 # Shared functions for xcode-build and xcode-test
 
-# Check that required dependencies are available
-check_dependencies() {
-    local missing=()
-
-    if ! command -v xcodebuild &>/dev/null; then
-        missing+=("xcodebuild (install Xcode Command Line Tools: xcode-select --install)")
-    fi
-
-    if ! command -v xcrun &>/dev/null; then
-        missing+=("xcrun (install Xcode Command Line Tools: xcode-select --install)")
-    fi
-
-    if [[ ${#missing[@]} -gt 0 ]]; then
-        echo "Missing required dependencies:" >&2
-        for dep in "${missing[@]}"; do
-            echo "  - $dep" >&2
-        done
-        exit 1
-    fi
-}
-
-# Check if build output indicates a database lock error
-# Usage: check_database_lock "$BUILD_OUTPUT"
-# Returns 0 (true) if database is locked, 1 (false) otherwise
-check_database_lock() {
-    [[ "$1" == *"database is locked"* ]]
+# Run xcodebuild, retrying while a concurrent build holds the build database.
+# Sets XCODEBUILD_OUTPUT. Removes RESULT_PATH (when set) before each attempt.
+# Usage: run_xcodebuild <xcodebuild args...>
+run_xcodebuild() {
+    local retries=0 max_retries=5 status
+    while true; do
+        [[ -n "${RESULT_PATH:-}" ]] && rm -rf "$RESULT_PATH"
+        XCODEBUILD_OUTPUT=$(xcodebuild "$@" 2>&1)
+        status=$?
+        if [[ $status -eq 0 || $retries -ge $max_retries ||
+              "$XCODEBUILD_OUTPUT" != *"database is locked"* ]]; then
+            return $status
+        fi
+        retries=$((retries + 1))
+        echo "Build database locked. Retrying ($retries/$max_retries)..."
+        sleep 1
+    done
 }
 
 # Extract compilation errors from xcodebuild output
@@ -56,41 +47,13 @@ print_warnings() {
     fi
 }
 
-# Get a default iOS simulator destination (prefers iPhone Pro Max)
-get_ios_simulator() {
-    local name
-
-    # Try iPhone Pro Max first - get the latest one
-    name=$(xcrun simctl list devices available 2>/dev/null | \
-           grep -oE "iPhone [0-9]+ Pro Max" | \
-           sort -t' ' -k2 -n | \
-           tail -1)
-
-    if [[ -n "$name" ]]; then
-        echo "platform=iOS Simulator,name=$name"
-        return 0
-    fi
-
-    # Fallback: any iPhone
-    name=$(xcrun simctl list devices available 2>/dev/null | \
-           grep -oE "iPhone [0-9]+[^)]*" | \
-           sort -t' ' -k2 -n | \
-           tail -1)
-
-    if [[ -n "$name" ]]; then
-        echo "platform=iOS Simulator,name=$name"
-        return 0
-    fi
-
-    return 1
-}
-
-# Show broader error patterns when specific errors can't be extracted
+# Show broader error patterns when no source-located errors can be extracted
+# (linker, signing, package resolution, unknown scheme or destination).
 # Usage: show_fallback_errors "$BUILD_OUTPUT"
 show_fallback_errors() {
     local output="$1"
     local broader_errors
-    broader_errors=$(echo "$output" | grep -E "error:" | grep -v "xcodebuild:" | head -20 || true)
+    broader_errors=$(echo "$output" | grep -E "error:" | head -20 || true)
 
     if [[ -n "$broader_errors" ]]; then
         echo "$broader_errors"

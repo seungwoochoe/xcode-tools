@@ -3,6 +3,7 @@
 [![CI](https://github.com/seungwoochoe/xcode-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/seungwoochoe/xcode-tools/actions/workflows/ci.yml)
 
 Wrappers around `xcodebuild` that deduplicate build errors and report test failure reasons.
+A run is retried only while a concurrent build holds the build database.
 
 ## Setup
 
@@ -23,9 +24,8 @@ xcode-test MyApp --result-path ./results.xcresult
 xcode-test MyApp -- -only-testing:MyAppTests/SomeTest
 ```
 
-For iOS-only schemes, omitting `-destination` selects the latest available iPhone
-Pro Max, falling back to another iPhone. Use the explicit destination above to
-select iPhone 18 Pro; that simulator must be installed.
+Without `-destination`, `xcodebuild` picks the destination; pass one for
+simulator runs.
 
 Both commands accept `-h`/`--help`, `-destination DEST`, and extra `xcodebuild`
 flags after `--`. Only `xcode-test` accepts `--result-path PATH`; its default is
