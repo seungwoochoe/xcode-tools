@@ -74,7 +74,7 @@ run_xcodebuild -scheme "$SCHEME" -configuration "$CONFIGURATION" \
     ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} build \
     ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
 
-if echo "$XCODEBUILD_OUTPUT" | grep -q "BUILD SUCCEEDED"; then
+if [[ "$XCODEBUILD_OUTPUT" == *"BUILD SUCCEEDED"* ]]; then
     echo "✓ Build succeeded"
     print_warnings "$XCODEBUILD_OUTPUT"
     exit 0

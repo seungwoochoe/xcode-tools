@@ -90,7 +90,7 @@ run_xcodebuild test -scheme "$SCHEME" ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} \
     -resultBundlePath "$RESULT_PATH" \
     ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
 
-if echo "$XCODEBUILD_OUTPUT" | grep -q "TEST SUCCEEDED"; then
+if [[ "$XCODEBUILD_OUTPUT" == *"TEST SUCCEEDED"* ]]; then
     print_test_success "$RESULT_PATH" "$XCODEBUILD_OUTPUT"
     exit 0
 fi
