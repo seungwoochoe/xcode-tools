@@ -1,5 +1,17 @@
 #!/bin/bash
 
+# Print each failed test with its failure messages; empty when none are recorded.
+# Usage: extract_test_failures "$RESULT_PATH"
+extract_test_failures() {
+    xcrun xcresulttool get test-results tests --path "$1" 2>/dev/null | jq -r '
+      .. |
+      objects |
+      select(.result == "Failed" and .nodeIdentifier != null and (.children | length > 0)) |
+      .nodeIdentifier as $test |
+      "\($test):\n" + ([.children[]? | select(.nodeType == "Failure Message") | .name] | join("\n")) + "\n"
+    ' || true
+}
+
 # Print a bounded success report; keep complete diagnostics in the result bundle.
 # Usage: print_test_success "$RESULT_PATH" "$TEST_OUTPUT"
 print_test_success() {

@@ -28,52 +28,13 @@ Examples:
 EOF
 }
 
-RESULT_PATH=""
-DEST_ARGS=()
-EXTRA_ARGS=()
-POSITIONAL=()
-
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        -h|--help)
-            show_help
-            exit 0
-            ;;
-        -destination)
-            DEST_ARGS=(-destination "$2")
-            shift 2
-            ;;
-        --result-path)
-            RESULT_PATH="$2"
-            shift 2
-            ;;
-        --)
-            shift
-            EXTRA_ARGS=("$@")
-            break
-            ;;
-        -*)
-            echo "Unknown option: $1" >&2
-            echo "Use --help for usage information" >&2
-            exit 1
-            ;;
-        *)
-            POSITIONAL+=("$1")
-            shift
-            ;;
-    esac
-done
-
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 # shellcheck source=lib/test-results.sh
 source "$SCRIPT_DIR/lib/test-results.sh"
 
-if [[ ${#POSITIONAL[@]} -lt 1 ]]; then
-    echo "Error: scheme is required" >&2
-    echo "Use --help for usage information" >&2
-    exit 1
-fi
+ACCEPTS_RESULT_PATH=1
+parse_arguments "$@"
 
 if ! command -v jq &>/dev/null; then
     echo "Missing required dependency: jq (install with brew install jq)" >&2
@@ -103,13 +64,7 @@ if [[ -n "$BUILD_ERRORS" ]]; then
     exit 1
 fi
 
-TEST_FAILURES=$(xcrun xcresulttool get test-results tests --path "$RESULT_PATH" 2>/dev/null | jq -r '
-  .. |
-  objects |
-  select(.result == "Failed" and .nodeIdentifier != null and (.children | length > 0)) |
-  .nodeIdentifier as $test |
-  "\($test):\n" + ([.children[]? | select(.nodeType == "Failure Message") | .name] | join("\n")) + "\n"
-' || true)
+TEST_FAILURES=$(extract_test_failures "$RESULT_PATH")
 
 if [[ -n "$TEST_FAILURES" ]]; then
     echo "✗ Tests failed:"

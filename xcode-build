@@ -27,45 +27,10 @@ Examples:
 EOF
 }
 
-DEST_ARGS=()
-EXTRA_ARGS=()
-POSITIONAL=()
-
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        -h|--help)
-            show_help
-            exit 0
-            ;;
-        -destination)
-            DEST_ARGS=(-destination "$2")
-            shift 2
-            ;;
-        --)
-            shift
-            EXTRA_ARGS=("$@")
-            break
-            ;;
-        -*)
-            echo "Unknown option: $1" >&2
-            echo "Use --help for usage information" >&2
-            exit 1
-            ;;
-        *)
-            POSITIONAL+=("$1")
-            shift
-            ;;
-    esac
-done
-
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
-if [[ ${#POSITIONAL[@]} -lt 1 ]]; then
-    echo "Error: scheme is required" >&2
-    echo "Use --help for usage information" >&2
-    exit 1
-fi
+parse_arguments "$@"
 
 SCHEME="${POSITIONAL[0]}"
 CONFIGURATION="${POSITIONAL[1]:-Debug}"
