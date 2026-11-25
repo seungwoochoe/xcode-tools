@@ -11,8 +11,8 @@ usage_error() {
 }
 
 # Parse the command line shared by both commands. Sets POSITIONAL, DEST_ARGS,
-# EXTRA_ARGS and RESULT_PATH; -h/--help calls the caller's show_help.
-# --result-path is accepted only when ACCEPTS_RESULT_PATH is 1.
+# EXTRA_ARGS, RESULT_PATH and HOST; -h/--help calls the caller's show_help.
+# --result-path and --host are accepted only when ACCEPTS_RESULT_PATH is 1.
 # Usage: parse_arguments "$@"
 # shellcheck disable=SC2034  # The sourcing command reads these globals.
 parse_arguments() {
@@ -20,6 +20,7 @@ parse_arguments() {
     DEST_ARGS=()
     EXTRA_ARGS=()
     RESULT_PATH=""
+    HOST=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -34,6 +35,11 @@ parse_arguments() {
             --result-path)
                 [[ "${ACCEPTS_RESULT_PATH:-0}" == 1 ]] || usage_error "Unknown option: $1"
                 RESULT_PATH="$2"
+                shift 2
+                ;;
+            --host)
+                [[ "${ACCEPTS_RESULT_PATH:-0}" == 1 ]] || usage_error "Unknown option: $1"
+                HOST="$2"
                 shift 2
                 ;;
             --)

@@ -87,6 +87,9 @@ run_test_contains "xcode-build --help shows usage" "$HELP_OUTPUT" "Usage: xcode-
 HELP_OUTPUT=$("$ROOT_DIR/xcode-test" --help 2>&1)
 run_test_contains "xcode-test --help shows usage" "$HELP_OUTPUT" "Usage: xcode-test"
 
+HELP_OUTPUT=$("$ROOT_DIR/xcode-remote" --help 2>&1)
+run_test_contains "xcode-remote --help shows usage" "$HELP_OUTPUT" "Usage: xcode-remote"
+
 # Test 7: Missing scheme shows error
 echo ""
 echo "Testing error handling..."
@@ -95,6 +98,15 @@ run_test_contains "xcode-build without args shows error" "$ERROR_OUTPUT" "scheme
 
 ERROR_OUTPUT=$("$ROOT_DIR/xcode-test" 2>&1 || true)
 run_test_contains "xcode-test without args shows error" "$ERROR_OUTPUT" "scheme is required"
+
+ERROR_OUTPUT=$("$ROOT_DIR/xcode-remote" air 2>&1 || true)
+run_test_contains "xcode-remote without a command shows error" "$ERROR_OUTPUT" "command is required"
+
+ERROR_OUTPUT=$("$ROOT_DIR/xcode-build" Demo --host air 2>&1 || true)
+run_test_contains "xcode-build rejects --host" "$ERROR_OUTPUT" "Unknown option: --host"
+
+# shellcheck source=test/test-remote.sh
+source "$SCRIPT_DIR/test-remote.sh"
 
 # shellcheck source=test/test-reporting.sh
 source "$SCRIPT_DIR/test-reporting.sh"

@@ -19,12 +19,14 @@ Options:
   -h, --help          Show this help message
   -destination DEST   Test destination
   --result-path PATH  Path for .xcresult bundle (default: \$TMPDIR/<scheme>Test.xcresult)
+  --host HOST         Run on another Mac over SSH (see xcode-remote --help)
 
 Examples:
   xcode-test MyMacApp
   xcode-test MyApp -destination "platform=iOS Simulator,name=iPhone 18 Pro"
   xcode-test MyApp --result-path ./results.xcresult
   xcode-test MyApp -- -only-testing:MyAppTests/SomeTest
+  xcode-test MyMacApp --host air -- -only-testing:MyMacAppUITests
 EOF
 }
 
@@ -45,6 +47,29 @@ SCHEME="${POSITIONAL[0]}"
 
 if [[ -z "$RESULT_PATH" ]]; then
     RESULT_PATH="${TMPDIR:-/tmp}/${SCHEME}Test.xcresult"
+fi
+
+# Mirror the project to the host, run this command there, and copy the result
+# bundle back.
+if [[ -n "$HOST" ]]; then
+    # shellcheck source=lib/remote.sh
+    source "$SCRIPT_DIR/lib/remote.sh"
+
+    ROOT=$(remote_root "$HOST") || { echo "Could not reach $HOST over SSH" >&2; exit 1; }
+    MIRROR=$(remote_mirror_path "$ROOT" "$PWD") || exit 1
+    TOOLS=$(remote_mirror_path "$ROOT" "$SCRIPT_DIR") || exit 1
+    REMOTE_RESULT="$ROOT/results/${SCHEME}Test.xcresult"
+    REMOTE_ARGS=("$SCHEME" ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} --result-path "$REMOTE_RESULT")
+    [[ ${#EXTRA_ARGS[@]} -eq 0 ]] || REMOTE_ARGS+=(-- "${EXTRA_ARGS[@]}")
+
+    remote_push "$HOST" "$SCRIPT_DIR" "$TOOLS" tracked || exit 1
+    remote_push "$HOST" "$PWD" "$MIRROR" tracked || exit 1
+    remote_run "$HOST" "$TOOLS" "$MIRROR" "$TOOLS/xcode-test" "${REMOTE_ARGS[@]}"
+    STATUS=$?
+
+    rm -rf "$RESULT_PATH"
+    remote_fetch "$HOST" "$REMOTE_RESULT" "$RESULT_PATH" && echo "Copied to: $RESULT_PATH"
+    exit "$STATUS"
 fi
 
 run_xcodebuild test -scheme "$SCHEME" ${DEST_ARGS[@]+"${DEST_ARGS[@]}"} \

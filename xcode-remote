@@ -1,0 +1,105 @@
+#!/bin/bash
+
+# xcode-remote: Mirror the current directory to another Mac and run a command there
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+show_help() {
+    cat <<EOF
+Usage: xcode-remote <host> [options] -- <command> [args...]
+
+Mirror the current directory to another Mac over SSH, run a command in the
+mirror inside that Mac's desktop session, and exit with the command's status.
+Use it for UI tests that would otherwise take over this Mac's screen.
+
+Arguments:
+  host          SSH host with key authentication and a logged-in desktop session
+
+Options:
+  -h, --help    Show this help message
+  --with DIR    Also mirror DIR, such as a sibling repository the command uses
+  --push DIR    Also mirror a git-ignored directory below the current one
+  --pull DIR    Copy a directory below the current one back afterwards
+
+--with, --push, and --pull can be repeated. The mirror leaves out .git and
+git-ignored files and lives in ~/.xcode-remote on the host.
+
+Examples:
+  xcode-remote air -- xcodebuild test -scheme MyMacApp
+  xcode-remote air --with ../tools --pull Screenshots -- ../tools/capture.sh
+EOF
+}
+
+usage_error() {
+    echo "$1" >&2
+    echo "Use --help for usage information" >&2
+    exit 1
+}
+
+# shellcheck source=lib/remote.sh
+source "$SCRIPT_DIR/lib/remote.sh"
+
+HOST=""
+WITH_DIRS=()
+PUSH_DIRS=()
+PULL_DIRS=()
+COMMAND=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        --with|--push|--pull)
+            [[ $# -ge 2 ]] || usage_error "Error: $1 needs a directory"
+            case "$1" in
+                --with) WITH_DIRS+=("$2") ;;
+                --push) PUSH_DIRS+=("$2") ;;
+                --pull) PULL_DIRS+=("$2") ;;
+            esac
+            shift 2
+            ;;
+        --)
+            shift
+            COMMAND=("$@")
+            break
+            ;;
+        -*)
+            usage_error "Unknown option: $1"
+            ;;
+        *)
+            [[ -z "$HOST" ]] || usage_error "Unexpected argument: $1"
+            HOST="$1"
+            shift
+            ;;
+    esac
+done
+
+[[ -n "$HOST" ]] || usage_error "Error: host is required"
+[[ ${#COMMAND[@]} -ge 1 ]] || usage_error "Error: command is required after --"
+
+ROOT=$(remote_root "$HOST") || { echo "Could not reach $HOST over SSH" >&2; exit 1; }
+MIRROR=$(remote_mirror_path "$ROOT" "$PWD") || exit 1
+TOOLS=$(remote_mirror_path "$ROOT" "$SCRIPT_DIR") || exit 1
+
+remote_push "$HOST" "$SCRIPT_DIR" "$TOOLS" tracked || exit 1
+remote_push "$HOST" "$PWD" "$MIRROR" tracked || exit 1
+for dir in ${WITH_DIRS[@]+"${WITH_DIRS[@]}"}; do
+    with_mirror=$(remote_mirror_path "$ROOT" "$dir") || exit 1
+    remote_push "$HOST" "$dir" "$with_mirror" tracked || exit 1
+done
+for dir in ${PUSH_DIRS[@]+"${PUSH_DIRS[@]}"}; do
+    remote_push "$HOST" "$dir" "$MIRROR/$dir" || exit 1
+done
+
+remote_run "$HOST" "$TOOLS" "$MIRROR" "${COMMAND[@]}"
+STATUS=$?
+
+for dir in ${PULL_DIRS[@]+"${PULL_DIRS[@]}"}; do
+    remote_fetch "$HOST" "$MIRROR/$dir" "$dir" || echo "Nothing to copy back for $dir" >&2
+done
+
+exit "$STATUS"
